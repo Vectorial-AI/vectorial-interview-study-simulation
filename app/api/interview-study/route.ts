@@ -1,0 +1,164 @@
+import { randomUUID } from "crypto";
+import { NextRequest, NextResponse } from "next/server";
+import { start } from "workflow/api";
+import { interviewStudyWorkflow } from "@/app/workflows/interview-study";
+import { ProgressStore } from "@/lib/progress-store";
+import { Settings } from "@/lib/settings";
+import type {
+  AudienceRoomInput,
+  InterviewQuestionInput,
+  InterviewStudyInput,
+} from "@/lib/types";
+
+export async function OPTIONS() {
+  return cors(new NextResponse(null, { status: 204 }));
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = (await request.json()) as Record<string, unknown>;
+    const parsed = validate(body);
+    const runId = randomUUID();
+    const studyId = parsed.studyId ?? randomUUID();
+    const settings = Settings.getInstance();
+    const input: InterviewStudyInput = {
+      ...parsed,
+      studyId,
+      runId,
+      responseBatchSize: settings.responseBatchSize,
+    };
+
+    const progress = new ProgressStore();
+    await progress.set(runId, {
+      totalQuestions: input.questions.length,
+      stepName: "queued",
+    });
+    const run = await start(interviewStudyWorkflow, [input]);
+    await progress.alias(run.runId, runId);
+
+    return cors(
+      NextResponse.json(
+        {
+          runId: run.runId,
+          studyId,
+          status: "queued",
+          statusUrl: `/api/interview-study/status/${run.runId}`,
+        },
+        { status: 202 }
+      )
+    );
+  } catch (error) {
+    return cors(
+      NextResponse.json(
+        { error: error instanceof Error ? error.message : String(error) },
+        { status: 400 }
+      )
+    );
+  }
+}
+
+function validate(body: Record<string, unknown>): Omit<
+  InterviewStudyInput,
+  "runId" | "studyId" | "responseBatchSize"
+> & { studyId?: string } {
+  const studyName = requiredString(body.studyName, "studyName");
+  const enterpriseName = requiredString(body.enterpriseName, "enterpriseName");
+  const userId = requiredString(body.userId, "userId");
+  const rawQuestions = body.questions;
+  if (!Array.isArray(rawQuestions) || rawQuestions.length === 0) {
+    throw new Error("questions must be a non-empty array");
+  }
+  if (rawQuestions.length > 50) {
+    throw new Error("questions may contain at most 50 items");
+  }
+  const questions: InterviewQuestionInput[] = rawQuestions.map(
+    (question, index) => {
+      if (typeof question === "string") {
+        return {
+          id: `question-${index + 1}`,
+          text: requiredString(question, `questions[${index}]`),
+        };
+      }
+      if (!question || typeof question !== "object") {
+        throw new Error(`questions[${index}] must be a string or object`);
+      }
+      const value = question as Record<string, unknown>;
+      return {
+        id:
+          optionalString(value.id) ??
+          `question-${index + 1}`,
+        text: requiredString(value.text, `questions[${index}].text`),
+      };
+    }
+  );
+  if (new Set(questions.map((question) => question.id)).size !== questions.length) {
+    throw new Error("question IDs must be unique");
+  }
+
+  if (!Array.isArray(body.audienceRooms) || body.audienceRooms.length === 0) {
+    throw new Error("audienceRooms must be a non-empty array");
+  }
+  if (body.audienceRooms.length > 10) {
+    throw new Error("audienceRooms may contain at most 10 rooms");
+  }
+  const audienceRooms: AudienceRoomInput[] = body.audienceRooms.map(
+    (room, index) => {
+      if (!room || typeof room !== "object") {
+        throw new Error(`audienceRooms[${index}] must be an object`);
+      }
+      const value = room as Record<string, unknown>;
+      const maxProfiles =
+        value.maxProfiles === undefined ? 25 : Number(value.maxProfiles);
+      if (
+        !Number.isInteger(maxProfiles) ||
+        maxProfiles < 1 ||
+        maxProfiles > 100
+      ) {
+        throw new Error(
+          `audienceRooms[${index}].maxProfiles must be an integer from 1 to 100`
+        );
+      }
+      return {
+        id: requiredString(value.id, `audienceRooms[${index}].id`),
+        maxProfiles,
+      };
+    }
+  );
+  const requestedProfiles = audienceRooms.reduce(
+    (total, room) => total + room.maxProfiles,
+    0
+  );
+  if (requestedProfiles > 100) {
+    throw new Error("A study may request at most 100 profiles in total");
+  }
+
+  return {
+    studyId: optionalString(body.studyId),
+    studyName,
+    objective: optionalString(body.objective),
+    additionalContext: optionalString(body.additionalContext),
+    questions,
+    audienceRooms,
+    enterpriseName,
+    userId,
+    userEmail: optionalString(body.userEmail),
+  };
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${field} is required`);
+  }
+  return value.trim();
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function cors(response: NextResponse): NextResponse {
+  response.headers.set("Access-Control-Allow-Origin", "*");
+  response.headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  response.headers.set("Access-Control-Allow-Headers", "Content-Type");
+  return response;
+}
