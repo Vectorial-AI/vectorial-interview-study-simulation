@@ -2,39 +2,110 @@ import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { start } from "workflow/api";
 import { interviewStudyWorkflow } from "@/app/workflows/interview-study";
+import { InterviewStudyStore } from "@/lib/interview-study-store";
 import { ProgressStore } from "@/lib/progress-store";
 import { Settings } from "@/lib/settings";
 import type {
   AudienceRoomInput,
   InterviewQuestionInput,
   InterviewStudyInput,
+  InterviewStudyStatus,
 } from "@/lib/types";
 
 export async function OPTIONS() {
   return cors(new NextResponse(null, { status: 204 }));
 }
 
+export async function GET(request: NextRequest) {
+  try {
+    const enterpriseName = requiredString(
+      request.nextUrl.searchParams.get("enterpriseName"),
+      "enterpriseName"
+    );
+    const userId = optionalString(request.nextUrl.searchParams.get("userId"));
+    const studyId = optionalString(request.nextUrl.searchParams.get("studyId"));
+    const status = optionalStatus(request.nextUrl.searchParams.get("status"));
+    const limit = boundedInteger(
+      request.nextUrl.searchParams.get("limit"),
+      25,
+      1,
+      100,
+      "limit"
+    );
+    const offset = boundedInteger(
+      request.nextUrl.searchParams.get("offset"),
+      0,
+      0,
+      10_000,
+      "offset"
+    );
+    const result = await new InterviewStudyStore(enterpriseName).list({
+      userId,
+      studyId,
+      status,
+      limit,
+      offset,
+    });
+
+    return cors(
+      NextResponse.json({
+        ...result,
+        limit,
+        offset,
+        hasMore: offset + result.studies.length < result.total,
+      })
+    );
+  } catch (error) {
+    return cors(
+      NextResponse.json(
+        { error: error instanceof Error ? error.message : String(error) },
+        { status: 400 }
+      )
+    );
+  }
+}
+
 export async function POST(request: NextRequest) {
+  let store: InterviewStudyStore | null = null;
+  let recordId: string | null = null;
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const parsed = validate(body);
-    const runId = randomUUID();
+    const trackingId = randomUUID();
     const studyId = parsed.studyId ?? randomUUID();
     const settings = Settings.getInstance();
     const input: InterviewStudyInput = {
       ...parsed,
       studyId,
-      runId,
+      runId: trackingId,
       responseBatchSize: settings.responseBatchSize,
     };
+    store = new InterviewStudyStore(input.enterpriseName);
+    recordId = trackingId;
+    await store.create({
+      id: recordId,
+      studyId,
+      runId: trackingId,
+      studyName: input.studyName,
+      objective: input.objective,
+      additionalContext: input.additionalContext,
+      questions: input.questions,
+      audienceRooms: input.audienceRooms,
+      enterpriseName: input.enterpriseName,
+      userId: input.userId,
+      userEmail: input.userEmail,
+    });
 
     const progress = new ProgressStore();
-    await progress.set(runId, {
+    await progress.set(trackingId, {
       totalQuestions: input.questions.length,
       stepName: "queued",
     });
     const run = await start(interviewStudyWorkflow, [input]);
-    await progress.alias(run.runId, runId);
+    await Promise.all([
+      progress.alias(run.runId, trackingId),
+      store.setWorkflowRunId(recordId, run.runId),
+    ]);
 
     return cors(
       NextResponse.json(
@@ -42,12 +113,23 @@ export async function POST(request: NextRequest) {
           runId: run.runId,
           studyId,
           status: "queued",
-          statusUrl: `/api/interview-study/status/${run.runId}`,
+          statusUrl: `/api/interview-study/status/${run.runId}?enterpriseName=${encodeURIComponent(input.enterpriseName)}`,
+          resultUrl: `/api/interview-study/${encodeURIComponent(studyId)}?enterpriseName=${encodeURIComponent(input.enterpriseName)}`,
         },
         { status: 202 }
       )
     );
   } catch (error) {
+    if (store && recordId) {
+      try {
+        await store.markFailed(
+          recordId,
+          error instanceof Error ? error.message : String(error)
+        );
+      } catch {
+        // Preserve the startup error.
+      }
+    }
     return cors(
       NextResponse.json(
         { error: error instanceof Error ? error.message : String(error) },
@@ -156,9 +238,37 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function optionalStatus(value: unknown): InterviewStudyStatus | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  if (
+    value === "queued" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed"
+  ) {
+    return value;
+  }
+  throw new Error("status must be queued, running, completed, or failed");
+}
+
+function boundedInteger(
+  value: string | null,
+  fallback: number,
+  min: number,
+  max: number,
+  field: string
+): number {
+  if (value === null || value === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${field} must be an integer from ${min} through ${max}`);
+  }
+  return parsed;
+}
+
 function cors(response: NextResponse): NextResponse {
   response.headers.set("Access-Control-Allow-Origin", "*");
-  response.headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  response.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   response.headers.set("Access-Control-Allow-Headers", "Content-Type");
   return response;
 }

@@ -5,6 +5,7 @@ import {
   InterviewAgentService,
   RetryableAgentError,
 } from "@/lib/interview-agent.service";
+import { InterviewStudyStore } from "@/lib/interview-study-store";
 import { ProfileService } from "@/lib/profile.service";
 import { ProgressStore } from "@/lib/progress-store";
 import { ReportService } from "@/lib/report.service";
@@ -130,17 +131,41 @@ export async function summarizeStudyStep(input: {
 
 export async function storeReportStep(
   enterpriseName: string,
+  recordId: string,
   report: InterviewStudyReport
 ): Promise<string> {
   "use step";
   const safeEnterprise = enterpriseName.replace(/[^a-zA-Z0-9_-]/g, "_");
   const safeStudyId = report.studyId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const safeRecordId = recordId.replace(/[^a-zA-Z0-9_-]/g, "_");
   const blob = await put(
-    `interview-studies/${safeEnterprise}/${safeStudyId}.json`,
+    `interview-studies/${safeEnterprise}/${safeStudyId}/${safeRecordId}.json`,
     JSON.stringify(report, null, 2),
     { access: "public", contentType: "application/json", addRandomSuffix: false }
   );
+  await new InterviewStudyStore(enterpriseName).markCompleted(
+    recordId,
+    report,
+    blob.url
+  );
   return blob.url;
+}
+
+export async function markStudyRunningStep(
+  enterpriseName: string,
+  recordId: string
+): Promise<void> {
+  "use step";
+  await new InterviewStudyStore(enterpriseName).markRunning(recordId);
+}
+
+export async function markStudyFailedStep(
+  enterpriseName: string,
+  recordId: string,
+  error: string
+): Promise<void> {
+  "use step";
+  await new InterviewStudyStore(enterpriseName).markFailed(recordId, error);
 }
 
 export async function getCompletionTimestampStep(): Promise<string> {

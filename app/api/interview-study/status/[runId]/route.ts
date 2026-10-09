@@ -1,14 +1,18 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getRun } from "workflow/api";
+import { InterviewStudyStore } from "@/lib/interview-study-store";
 import { ProgressStore } from "@/lib/progress-store";
-import type { InterviewStudyWorkflowOutput } from "@/lib/types";
+import type {
+  InterviewStudyReport,
+  InterviewStudyWorkflowOutput,
+} from "@/lib/types";
 
 export async function OPTIONS() {
   return cors(new NextResponse(null, { status: 204 }));
 }
 
 export async function GET(
-  _request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ runId: string }> }
 ) {
   const { runId } = await params;
@@ -65,6 +69,43 @@ export async function GET(
       })
     );
   } catch {
+    const enterpriseName = request.nextUrl.searchParams.get("enterpriseName");
+    if (enterpriseName?.trim()) {
+      try {
+        const study = await new InterviewStudyStore(
+          enterpriseName.trim()
+        ).getByRunId(runId);
+        if (study) {
+          let result: InterviewStudyReport | null = null;
+          if (study.status === "completed" && study.resultDataUrl) {
+            const response = await fetch(study.resultDataUrl, {
+              signal: AbortSignal.timeout(30_000),
+            });
+            if (response.ok) {
+              result = (await response.json()) as InterviewStudyReport;
+            }
+          }
+          return cors(
+            NextResponse.json({
+              runId,
+              studyId: study.studyId,
+              status: study.status,
+              progress: null,
+              result,
+              resultDataUrl: study.resultDataUrl,
+              error: study.error,
+            })
+          );
+        }
+      } catch {
+        return cors(
+          NextResponse.json(
+            { runId, error: "Persisted workflow status could not be loaded" },
+            { status: 500 }
+          )
+        );
+      }
+    }
     return cors(
       NextResponse.json(
         { runId, error: "Workflow run not found" },

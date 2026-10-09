@@ -42,6 +42,17 @@ export class Settings {
       process.env.CHAT_BATCH_SIZE,
     2
   );
+
+  getEnterpriseDirectDatabaseUrl(enterpriseName: string): string {
+    const normalized = enterpriseName
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "_");
+    if (!normalized) {
+      throw new Error("enterpriseName is required");
+    }
+    return required(`${normalized}_DIRECT_DATABASE_URL`);
+  }
 }
 
 function required(key: string): string {

@@ -104,6 +104,35 @@ export interface InterviewStudyReport {
   resultDataUrl?: string;
 }
 
+export type InterviewStudyStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed";
+
+export interface InterviewStudyRecord {
+  id: string;
+  studyId: string;
+  runId: string | null;
+  studyName: string;
+  objective: string | null;
+  additionalContext: string | null;
+  questions: InterviewQuestionInput[];
+  audienceRooms: AudienceRoomInput[];
+  enterpriseName: string;
+  userId: string;
+  userEmail: string | null;
+  status: InterviewStudyStatus;
+  resultDataUrl: string | null;
+  error: string | null;
+  questionCount: number;
+  profileCount: number | null;
+  responseCount: number | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
 export type InterviewStudyWorkflowOutput =
   | { status: "completed"; result: InterviewStudyReport }
   | { status: "failed"; error: string };

@@ -13,20 +13,44 @@ An interview study is asynchronous:
 3. The frontend polls the status endpoint using that `runId`.
 4. When the status becomes `completed`, the response contains the full report
    and a public JSON report URL.
+5. The API keeps a durable metadata row in the selected tenant database, so
+   history and completed results remain discoverable after Redis or workflow
+   retention expires.
 
 Questions are processed sequentially. For each question, the workflow asks
 every selected profile separately. Earlier answers from the same profile are
 included as context for later questions.
 
+Persistence uses two stores:
+
+- Each run's full report is written to Vercel Blob at
+  `interview-studies/{enterpriseName}/{studyId}/{recordId}.json`.
+- Job metadata and the Blob URL are written to the tenant's
+  `InterviewStudyResult` Postgres table, selected through
+  `{ENTERPRISE}_DIRECT_DATABASE_URL`.
+
+The database row is created before the workflow is enqueued and moves through
+`queued`, `running`, `completed`, or `failed`. The table is created
+idempotently in a tenant database when this API first accesses that tenant.
+
 ## Base URL
 
-Use the deployed workflow application's origin:
+Production:
 
 ```text
-https://<workflow-host>
+https://vectorial-interview-study-simulatio.vercel.app
 ```
 
-During local development this is typically:
+The production API endpoints are therefore:
+
+```text
+POST https://vectorial-interview-study-simulatio.vercel.app/api/interview-study
+GET  https://vectorial-interview-study-simulatio.vercel.app/api/interview-study?enterpriseName={tenant}
+GET  https://vectorial-interview-study-simulatio.vercel.app/api/interview-study/status/{runId}?enterpriseName={tenant}
+GET  https://vectorial-interview-study-simulatio.vercel.app/api/interview-study/{studyId}?enterpriseName={tenant}
+```
+
+During local development, use:
 
 ```text
 http://localhost:3000
@@ -175,6 +199,9 @@ interface StartInterviewStudyResponse {
 
   /** Relative status endpoint. */
   statusUrl: string;
+
+  /** Relative endpoint for loading this study after the workflow has expired. */
+  resultUrl: string;
 }
 ```
 
@@ -185,7 +212,8 @@ Example:
   "runId": "wrun_01J...",
   "studyId": "checkout-research-oct-2026",
   "status": "queued",
-  "statusUrl": "/api/interview-study/status/wrun_01J..."
+  "statusUrl": "/api/interview-study/status/wrun_01J...?enterpriseName=beta",
+  "resultUrl": "/api/interview-study/checkout-research-oct-2026?enterpriseName=beta"
 }
 ```
 
@@ -194,7 +222,11 @@ Example:
 - `runId` identifies this workflow execution and is used for status polling.
 - `studyId` identifies the report from the product's perspective.
 
-Store both values in frontend state.
+Store both IDs and both returned URLs in frontend state. The API creates a
+tenant database row before starting the workflow, then replaces its temporary
+tracking ID with the public workflow `runId`. Reusing a caller-supplied
+`studyId` creates another history row; `resultUrl` resolves the newest run for
+that `studyId`.
 
 ### Validation or startup failure
 
@@ -226,11 +258,12 @@ every `400` can be fixed by changing a single form field.
 ## 2. Get study status
 
 ```http
-GET /api/interview-study/status/{runId}
+GET /api/interview-study/status/{runId}?enterpriseName={tenant}
 ```
 
-Use the workflow `runId` returned by the start endpoint. Do not use `studyId`
-in this URL.
+Use the returned `statusUrl`; it includes the tenant needed to fall back to the
+persisted record after the workflow runtime no longer retains the run. Do not
+use `studyId` in this URL.
 
 ### Running response
 
@@ -239,7 +272,7 @@ Status: `200 OK`
 ```ts
 interface RunningInterviewStudyResponse {
   runId: string;
-  status: "running";
+  status: "queued" | "running";
   progress: InterviewProgress | null;
   result: null;
   error: null;
@@ -347,6 +380,28 @@ interface FailedInterviewStudyResponse {
 A failed workflow is represented by the JSON `status`, not by an HTTP error
 status. Always inspect `body.status`.
 
+### Persisted status fallback
+
+The API checks Workflow DevKit first. If that run is no longer available and
+`enterpriseName` was supplied, it loads the durable tenant record by `runId`.
+The fallback response adds `studyId` and `resultDataUrl`:
+
+```ts
+interface PersistedInterviewStudyStatusResponse {
+  runId: string;
+  studyId: string;
+  status: "queued" | "running" | "completed" | "failed";
+  progress: null;
+  result: InterviewStudyReport | null;
+  resultDataUrl: string | null;
+  error: string | null;
+}
+```
+
+For a completed record, the API attempts to load `result` from
+`resultDataUrl`. If `result` is unavailable, clients may fetch the URL directly
+or use the persisted study endpoint.
+
 ### Unknown run
 
 Status: `404 Not Found`
@@ -357,6 +412,147 @@ Status: `404 Not Found`
   "error": "Workflow run not found"
 }
 ```
+
+This `404` is returned only when neither the workflow runtime nor the selected
+tenant database contains the run. A tenant database lookup failure returns
+`500` with `Persisted workflow status could not be loaded`.
+
+## 3. List study history
+
+```http
+GET /api/interview-study?enterpriseName=beta&userId={userId}&limit=25&offset=0
+```
+
+`enterpriseName` is required. `userId`, `studyId`, and `status` are optional
+filters. `status` accepts `queued`, `running`, `completed`, or `failed`.
+`limit` defaults to 25 and is capped at 100.
+
+```ts
+interface InterviewStudyHistoryResponse {
+  studies: InterviewStudyRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
+interface InterviewStudyRecord {
+  /** Internal immutable record ID for this execution. */
+  id: string;
+
+  /** Application-level study ID; multiple runs may share this value. */
+  studyId: string;
+
+  /** Public workflow run ID used by the status endpoint. */
+  runId: string | null;
+
+  studyName: string;
+  objective: string | null;
+  additionalContext: string | null;
+  questions: Array<{ id: string; text: string }>;
+  audienceRooms: Array<{ id: string; maxProfiles: number }>;
+  enterpriseName: string;
+  userId: string;
+  userEmail: string | null;
+  status: "queued" | "running" | "completed" | "failed";
+
+  /** Public report Blob URL after completion. */
+  resultDataUrl: string | null;
+
+  error: string | null;
+  questionCount: number;
+  profileCount: number | null;
+  responseCount: number | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+```
+
+Rows are returned newest first. They include the original questions and room
+selection, lifecycle status, counts, error details, timestamps, and
+`resultDataUrl` for completed studies.
+
+Example:
+
+```json
+{
+  "studies": [
+    {
+      "id": "d9beb30e-...",
+      "studyId": "checkout-research-oct-2026",
+      "runId": "wrun_01J...",
+      "studyName": "Checkout Experience Interview",
+      "objective": "Understand checkout abandonment.",
+      "additionalContext": null,
+      "questions": [
+        { "id": "abandonment", "text": "What would make you stop?" }
+      ],
+      "audienceRooms": [
+        { "id": "audience-room-uuid", "maxProfiles": 25 }
+      ],
+      "enterpriseName": "beta",
+      "userId": "user-uuid",
+      "userEmail": "researcher@example.com",
+      "status": "completed",
+      "resultDataUrl": "https://...blob.vercel-storage.com/interview-studies/beta/checkout-research-oct-2026/d9beb30e-....json",
+      "error": null,
+      "questionCount": 1,
+      "profileCount": 25,
+      "responseCount": 25,
+      "createdAt": "2026-10-09T14:00:00.000Z",
+      "updatedAt": "2026-10-09T14:10:00.000Z",
+      "completedAt": "2026-10-09T14:10:00.000Z"
+    }
+  ],
+  "total": 1,
+  "limit": 25,
+  "offset": 0,
+  "hasMore": false
+}
+```
+
+Use `offset + limit` for the next page when `hasMore` is `true`. To open an
+older run when multiple records share a `studyId`, fetch that row's
+`resultDataUrl` directly.
+
+Invalid filters return `400`. `limit` must be 1-100, `offset` must be
+0-10,000, and `status` must use one of the four documented values.
+
+## 4. Get a persisted study result
+
+```http
+GET /api/interview-study/{studyId}?enterpriseName=beta
+```
+
+This returns the newest run for the supplied application-level `studyId`.
+Completed records include the full report loaded from the stored blob:
+
+```ts
+interface PersistedInterviewStudyResponse {
+  study: InterviewStudyRecord;
+  result: InterviewStudyReport | null;
+}
+```
+
+Use `includeResult=false` to return metadata without downloading the report.
+This endpoint and the database fallback in the status endpoint remain usable
+after the Redis progress record's 24-hour TTL or workflow retention window.
+
+Responses:
+
+- `200`: `{ study, result }`
+- `400`: missing `enterpriseName`
+- `404`: no record for that `studyId` in the selected tenant
+- `500`: tenant database or stored Blob could not be loaded
+
+Each tenant database owns its own `InterviewStudyResult` table. A row is
+created before the workflow starts and transitions through `queued`, `running`,
+`completed`, or `failed`; completed rows store the blob URL in `resultData`.
+For example, `enterpriseName: "beta"` selects
+`BETA_DIRECT_DATABASE_URL`. Tenant names are uppercased and non-alphanumeric
+characters become underscores when resolving the environment variable. The
+database role must be able to create the table and indexes on first access.
 
 ## Complete report schema
 
@@ -481,13 +677,14 @@ interface Citation {
 
 ## TypeScript frontend client
 
-The following client contains the complete start, status, and polling flow:
+The following client contains start, status, polling, history, and persisted
+result retrieval:
 
 ```ts
 export type StudyStatus =
   | {
       runId: string;
-      status: "running";
+      status: "queued" | "running";
       progress: InterviewProgress | null;
       result: null;
       error: null;
@@ -496,7 +693,8 @@ export type StudyStatus =
       runId: string;
       status: "completed";
       progress: InterviewProgress | null;
-      result: InterviewStudyReport;
+      result: InterviewStudyReport | null;
+      resultDataUrl?: string | null;
       error: null;
     }
   | {
@@ -541,13 +739,10 @@ export async function startInterviewStudy(
 
 export async function getInterviewStudyStatus(
   apiBaseUrl: string,
-  runId: string,
+  statusUrl: string,
   signal?: AbortSignal,
 ): Promise<StudyStatus> {
-  const response = await fetch(
-    `${apiBaseUrl}/api/interview-study/status/${encodeURIComponent(runId)}`,
-    { signal },
-  );
+  const response = await fetch(new URL(statusUrl, apiBaseUrl), { signal });
 
   const body = await response.json();
   if (!response.ok) {
@@ -562,7 +757,7 @@ export async function getInterviewStudyStatus(
 
 export async function waitForInterviewStudy(
   apiBaseUrl: string,
-  runId: string,
+  statusUrl: string,
   options: {
     signal?: AbortSignal;
     intervalMs?: number;
@@ -574,14 +769,23 @@ export async function waitForInterviewStudy(
   while (true) {
     const status = await getInterviewStudyStatus(
       apiBaseUrl,
-      runId,
+      statusUrl,
       options.signal,
     );
 
     options.onProgress?.(status.progress);
 
     if (status.status === "completed") {
-      return status.result;
+      if (status.result) return status.result;
+      if (status.resultDataUrl) {
+        const reportResponse = await fetch(status.resultDataUrl, {
+          signal: options.signal,
+        });
+        if (reportResponse.ok) {
+          return (await reportResponse.json()) as InterviewStudyReport;
+        }
+      }
+      throw new Error("Completed study report is unavailable");
     }
 
     if (status.status === "failed") {
@@ -590,6 +794,62 @@ export async function waitForInterviewStudy(
 
     await abortableDelay(intervalMs, options.signal);
   }
+}
+
+export async function listInterviewStudies(
+  apiBaseUrl: string,
+  input: {
+    enterpriseName: string;
+    userId?: string;
+    studyId?: string;
+    status?: "queued" | "running" | "completed" | "failed";
+    limit?: number;
+    offset?: number;
+  },
+  signal?: AbortSignal,
+): Promise<InterviewStudyHistoryResponse> {
+  const url = new URL("/api/interview-study", apiBaseUrl);
+  url.searchParams.set("enterpriseName", input.enterpriseName);
+  if (input.userId) url.searchParams.set("userId", input.userId);
+  if (input.studyId) url.searchParams.set("studyId", input.studyId);
+  if (input.status) url.searchParams.set("status", input.status);
+  if (input.limit !== undefined) {
+    url.searchParams.set("limit", String(input.limit));
+  }
+  if (input.offset !== undefined) {
+    url.searchParams.set("offset", String(input.offset));
+  }
+
+  const response = await fetch(url, { signal });
+  const body = await response.json();
+  if (!response.ok) {
+    throw new InterviewStudyApiError(
+      body.error ?? "Unable to list interview studies",
+      response.status,
+    );
+  }
+  return body as InterviewStudyHistoryResponse;
+}
+
+export async function getPersistedInterviewStudy(
+  apiBaseUrl: string,
+  resultUrl: string,
+  options: { includeResult?: boolean; signal?: AbortSignal } = {},
+): Promise<PersistedInterviewStudyResponse> {
+  const url = new URL(resultUrl, apiBaseUrl);
+  if (options.includeResult === false) {
+    url.searchParams.set("includeResult", "false");
+  }
+
+  const response = await fetch(url, { signal: options.signal });
+  const body = await response.json();
+  if (!response.ok) {
+    throw new InterviewStudyApiError(
+      body.error ?? "Unable to load persisted interview study",
+      response.status,
+    );
+  }
+  return body as PersistedInterviewStudyResponse;
 }
 
 function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
@@ -637,6 +897,8 @@ type StudyViewState =
       phase: "running";
       runId: string;
       studyId: string;
+      statusUrl: string;
+      resultUrl: string;
       progress: InterviewProgress | null;
     }
   | { phase: "completed"; report: InterviewStudyReport }
@@ -655,6 +917,8 @@ export function InterviewStudyRunner() {
         phase: "running",
         runId: started.runId,
         studyId: started.studyId,
+        statusUrl: started.statusUrl,
+        resultUrl: started.resultUrl,
         progress: null,
       });
     } catch (error) {
@@ -669,9 +933,9 @@ export function InterviewStudyRunner() {
     if (state.phase !== "running") return;
 
     const controller = new AbortController();
-    const { runId } = state;
+    const { runId, statusUrl } = state;
 
-    waitForInterviewStudy(apiBaseUrl, runId, {
+    waitForInterviewStudy(apiBaseUrl, statusUrl, {
       signal: controller.signal,
       intervalMs: 2000,
       onProgress: (progress) => {
@@ -699,8 +963,9 @@ export function InterviewStudyRunner() {
 }
 ```
 
-In production, persist `runId` and `studyId` outside transient component state
-so polling can resume after navigation or page refresh.
+In production, persist `runId`, `studyId`, `statusUrl`, and `resultUrl` outside
+transient component state so polling can resume after navigation or page
+refresh.
 
 ## Recommended report UI
 
@@ -733,15 +998,15 @@ also includes failed interview attempts.
   sooner.
 - Stop polling only when JSON `status` is `completed` or `failed`.
 - Use an `AbortController` when leaving the page.
-- Persist the returned `runId` immediately.
+- Persist the returned IDs and URLs immediately.
 - Retry temporary network failures with exponential backoff, but do not create
   a second study merely because a status request failed.
 - A `404` generally means the run ID is invalid or belongs to another
   deployment/environment.
-- Progress records have a 24-hour Redis TTL. The workflow status system remains
-  the source of truth for completion.
-- The current API does not provide cancellation, study listing, or lookup by
-  `studyId`. Frontends must retain the workflow `runId` for status retrieval.
+- Progress records have a 24-hour Redis TTL. The tenant database remains the
+  durable source of truth after progress or workflow retention expires.
+- The current API does not provide cancellation. Listing and lookup by
+  `studyId` are available through the persisted study endpoints.
 
 ## Current endpoint summary
 
@@ -750,11 +1015,24 @@ POST /api/interview-study
   Starts a study.
   Returns: 202 queued, or 400 error.
 
-GET /api/interview-study/status/{runId}
-  Returns workflow progress and the final report.
-  Returns: 200 running/completed/failed, or 404 unknown run.
+GET /api/interview-study?enterpriseName={tenant}
+  Lists persisted studies with optional filters and pagination.
+  Optional: userId, studyId, status, limit, offset.
+  Returns: 200 history, or 400 invalid query/configuration.
+
+GET /api/interview-study/status/{runId}?enterpriseName={tenant}
+  Returns live workflow progress or durable database fallback.
+  Returns: 200 queued/running/completed/failed, 404 unknown run, or 500
+  persisted-status lookup failure.
+
+GET /api/interview-study/{studyId}?enterpriseName={tenant}
+  Returns the newest persisted run and, by default, its completed report.
+  Optional: includeResult=false.
+  Returns: 200 result, 400 missing tenant, 404 unknown study, or 500
+  database/Blob lookup failure.
 
 OPTIONS /api/interview-study
 OPTIONS /api/interview-study/status/{runId}
+OPTIONS /api/interview-study/{studyId}
   CORS preflight.
 ```

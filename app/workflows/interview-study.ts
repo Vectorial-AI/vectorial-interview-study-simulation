@@ -2,6 +2,8 @@ import {
   askInterviewQuestionStep,
   fetchRoomProfilesStep,
   getCompletionTimestampStep,
+  markStudyFailedStep,
+  markStudyRunningStep,
   storeReportStep,
   summarizeProfileStep,
   summarizeQuestionStep,
@@ -22,6 +24,7 @@ export async function interviewStudyWorkflow(
   "use workflow";
 
   try {
+    await markStudyRunningStep(input.enterpriseName, input.runId);
     await updateProgressStep(input.runId, {
       currentStep: 1,
       stepName: "fetching_profiles",
@@ -200,17 +203,30 @@ export async function interviewStudyWorkflow(
       stepName: "storing_report",
       percentage: 95,
     });
-    const resultDataUrl = await storeReportStep(input.enterpriseName, report);
+    const resultDataUrl = await storeReportStep(
+      input.enterpriseName,
+      input.runId,
+      report
+    );
     const result = { ...report, resultDataUrl };
 
-    await updateProgressStep(input.runId, {
-      currentStep: 4,
-      stepName: "completed",
-      percentage: 100,
-    });
+    try {
+      await updateProgressStep(input.runId, {
+        currentStep: 4,
+        stepName: "completed",
+        percentage: 100,
+      });
+    } catch {
+      // The tenant database already contains the durable completed result.
+    }
     return { status: "completed", result };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    try {
+      await markStudyFailedStep(input.enterpriseName, input.runId, message);
+    } catch {
+      // Preserve the original workflow error.
+    }
     try {
       await updateProgressStep(input.runId, {
         currentStep: 0,
