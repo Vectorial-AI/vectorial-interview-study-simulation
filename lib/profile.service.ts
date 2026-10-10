@@ -40,10 +40,20 @@ export class ProfileService {
     }
 
     const data = (await response.json()) as EnrichmentResponse;
+    const seenProfileIds = new Set<string>();
     const selected = (data.profiles ?? [])
       .filter(
-        (profile): profile is { profileId: string; name?: string } =>
-          typeof profile.profileId === "string" && profile.profileId.length > 0
+        (profile): profile is { profileId: string; name?: string } => {
+          if (
+            typeof profile.profileId !== "string" ||
+            profile.profileId.length === 0 ||
+            seenProfileIds.has(profile.profileId)
+          ) {
+            return false;
+          }
+          seenProfileIds.add(profile.profileId);
+          return true;
+        }
       )
       .slice(0, maxProfiles);
 

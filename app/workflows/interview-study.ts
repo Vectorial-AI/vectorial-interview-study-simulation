@@ -77,61 +77,82 @@ export async function interviewStudyWorkflow(
           ),
       });
 
-      const questionResponses: IndividualResponse[] = [];
-      for (
-        let offset = 0;
-        offset < participants.length;
-        offset += input.responseBatchSize
-      ) {
-        const batch = participants.slice(
-          offset,
-          offset + input.responseBatchSize
-        );
-        const responses = await Promise.all(
-          batch.map((participant) =>
-            askInterviewQuestionStep({
-              enterpriseName: input.enterpriseName,
-              userId: input.userId,
-              studyName: input.studyName,
-              objective: input.objective,
-              additionalContext: input.additionalContext,
-              questionId: question.id,
-              question: question.text,
-              questionIndex,
-              audienceRoomId: participant.audienceRoomId,
-              audienceRoomSummary: participant.audienceRoomSummary,
-              profileId: participant.profileId,
-              profileName: participant.name,
-              profileSummary: participant.profileSummary,
-              priorResponses: allResponses
-                .filter(
-                  (response) =>
-                    `${response.audienceRoomId}:${response.profileId}` ===
-                      participant.participantKey &&
-                    !response.error &&
-                    !!response.response
-                )
-                .map((response) => ({
-                  question: response.question,
-                  response: response.response,
-                })),
-            })
-          )
-        );
-        questionResponses.push(...responses);
-        allResponses.push(...responses);
+      // Question barrier: every room completes all of its profile batches for
+      // this question before any profile can advance to the next question.
+      // Rooms run in parallel; batches within each room run sequentially.
+      const priorQuestionResponses = [...allResponses];
+      const responsesByRoom = await Promise.all(
+        rooms.map(async (room) => {
+          const roomParticipants = participants.filter(
+            (participant) =>
+              participant.audienceRoomId === room.audienceRoomId
+          );
+          const roomResponses: IndividualResponse[] = [];
 
-        await updateProgressStep(input.runId, {
-          currentStep: 2,
-          stepName: `interviewing_question_${questionIndex + 1}`,
-          processedResponses: allResponses.length,
-          percentage:
-            10 +
-            Math.round(
-              (allResponses.length / Math.max(totalExpectedResponses, 1)) * 60
-            ),
-        });
-      }
+          for (
+            let offset = 0;
+            offset < roomParticipants.length;
+            offset += input.responseBatchSize
+          ) {
+            const batch = roomParticipants.slice(
+              offset,
+              offset + input.responseBatchSize
+            );
+            const responses = await Promise.all(
+              batch.map((participant) =>
+                askInterviewQuestionStep({
+                  enterpriseName: input.enterpriseName,
+                  userId: input.userId,
+                  studyName: input.studyName,
+                  objective: input.objective,
+                  additionalContext: input.additionalContext,
+                  questionId: question.id,
+                  question: question.text,
+                  questionIndex,
+                  audienceRoomId: participant.audienceRoomId,
+                  audienceRoomSummary: participant.audienceRoomSummary,
+                  profileId: participant.profileId,
+                  profileName: participant.name,
+                  profileSummary: participant.profileSummary,
+                  priorResponses: priorQuestionResponses
+                    .filter(
+                      (response) =>
+                        `${response.audienceRoomId}:${response.profileId}` ===
+                          participant.participantKey &&
+                        !response.error &&
+                        !!response.response
+                    )
+                    .map((response) => ({
+                      question: response.question,
+                      response: response.response,
+                    })),
+                })
+              )
+            );
+            roomResponses.push(...responses);
+          }
+
+          return roomResponses;
+        })
+      );
+      const questionResponses = responsesByRoom.flat();
+      assertCompleteQuestionCoverage(
+        question.id,
+        participants,
+        questionResponses
+      );
+      allResponses.push(...questionResponses);
+
+      await updateProgressStep(input.runId, {
+        currentStep: 2,
+        stepName: `interviewing_question_${questionIndex + 1}`,
+        processedResponses: allResponses.length,
+        percentage:
+          10 +
+          Math.round(
+            (allResponses.length / Math.max(totalExpectedResponses, 1)) * 60
+          ),
+      });
 
       questionSummaries.push(
         await summarizeQuestionStep(
@@ -238,4 +259,55 @@ export async function interviewStudyWorkflow(
     }
     return { status: "failed", error: message };
   }
+}
+
+function assertCompleteQuestionCoverage(
+  questionId: string,
+  participants: Array<{
+    audienceRoomId: string;
+    profileId: string;
+    participantKey: string;
+  }>,
+  responses: IndividualResponse[]
+): void {
+  const expectedCounts = countByKey(
+    participants.map((participant) => participant.participantKey)
+  );
+  const actualCounts = countByKey(
+    responses.map(
+      (response) => `${response.audienceRoomId}:${response.profileId}`
+    )
+  );
+  const mismatches = [...expectedCounts.entries()].filter(
+    ([key, count]) => actualCounts.get(key) !== count
+  );
+  const unexpected = [...actualCounts.keys()].filter(
+    (key) => !expectedCounts.has(key)
+  );
+  const unsuccessful = responses.filter(
+    (response) =>
+      !!response.error ||
+      !response.response.trim() ||
+      !response.reason.trim() ||
+      !Number.isFinite(response.confidence)
+  );
+
+  if (
+    responses.length !== participants.length ||
+    mismatches.length > 0 ||
+    unexpected.length > 0 ||
+    unsuccessful.length > 0
+  ) {
+    throw new Error(
+      `Incomplete response coverage for question ${questionId}: expected ${participants.length}, received ${responses.length}, successful ${responses.length - unsuccessful.length}`
+    );
+  }
+}
+
+function countByKey(keys: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const key of keys) {
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
 }

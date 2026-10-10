@@ -17,9 +17,11 @@ An interview study is asynchronous:
    history and completed results remain discoverable after Redis or workflow
    retention expires.
 
-Questions are processed sequentially. For each question, the workflow asks
-every selected profile separately. Earlier answers from the same profile are
-included as context for later questions.
+Questions are processed sequentially. For each question, audience rooms run in
+parallel and each room processes profiles in sequential, configurable batches.
+The workflow waits for every selected profile to return a valid response before
+it summarizes that question or starts the next one. Earlier answers from the
+same profile are included as context for later questions.
 
 Persistence uses two stores:
 
@@ -248,6 +250,7 @@ Possible messages include:
 - `question IDs must be unique`
 - `audienceRooms must be a non-empty array`
 - `audienceRooms may contain at most 10 rooms`
+- `audience room IDs must be unique`
 - `audienceRooms[0].maxProfiles must be an integer from 1 to 100`
 - `A study may request at most 100 profiles in total`
 
@@ -640,12 +643,18 @@ interface IndividualResponse {
   profileSummary: string;
   audienceRoomId: string;
 
-  /** Verbatim chat-agent answer; empty when error is present. */
+  /** Substantive first-person persona answer; empty when error is present. */
   response: string;
+
+  /** Persona-grounded explanation for the answer; empty when error is present. */
+  reason: string;
+
+  /** Self-reported answer confidence from 0 through 1; 0 when error is present. */
+  confidence: number;
 
   citations: Citation[];
 
-  /** Present when this individual interview call failed permanently. */
+  /** Defensive/backward-compatible field; completed reports do not contain errors. */
   error?: string;
 }
 
@@ -662,13 +671,18 @@ interface Citation {
 - `overallSummary` is the study-level report.
 - `questionSummaries` contains one aggregate analysis per submitted question.
 - `individualSummaries` contains one cross-question summary per profile.
-- `individualResponses` contains the verbatim response for every attempted
-  question/profile pair.
+- `individualResponses` contains each persona's answer, explicit reason, and
+  confidence for every attempted question/profile pair.
+- Persona turns use the same structured open-ended response contract as the
+  audience-response simulation: `answer` is exposed as `response`, alongside
+  `reason` and normalized `confidence`.
 - `profileCount` is the number of profiles actually returned, not the requested
   maximum.
 - `responseCount` counts successful raw answers.
-- A failed individual response remains in `individualResponses` with an empty
-  `response` and an `error`. It is excluded from generated summaries.
+- A study is marked `completed` only after every profile has a valid answer,
+  reason, and confidence for every question. Invalid agent output is retried.
+  If retries are exhausted or a permanent call fails, the study is marked
+  `failed` instead of publishing a partial report.
 - Profile identity is unique by the combination of `audienceRoomId` and
   `profileId`. Use both values as a frontend list or map key.
 - `resultDataUrl` points to a public JSON blob. The blob contains the report

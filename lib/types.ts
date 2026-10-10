@@ -50,6 +50,8 @@ export interface IndividualResponse {
   profileSummary: string;
   audienceRoomId: string;
   response: string;
+  reason: string;
+  confidence: number;
   citations: Citation[];
   error?: string;
 }
@@ -138,6 +140,8 @@ export type InterviewStudyWorkflowOutput =
   | { status: "failed"; error: string };
 
 export interface ChatAgentResponse {
-  responseText: string;
+  answer: string;
+  reason: string;
+  confidence: number;
   citations: Citation[];
 }

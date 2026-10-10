@@ -1,5 +1,5 @@
 import { put } from "@vercel/blob";
-import { RetryableError, getStepMetadata } from "workflow";
+import { FatalError, RetryableError, getStepMetadata } from "workflow";
 import {
   FatalAgentError,
   InterviewAgentService,
@@ -57,7 +57,9 @@ export async function askInterviewQuestionStep(input: {
       profileName: input.profileName,
       profileSummary: input.profileSummary,
       audienceRoomId: input.audienceRoomId,
-      response: result.responseText,
+      response: result.answer,
+      reason: result.reason,
+      confidence: result.confidence,
       citations: result.citations,
     };
   } catch (error) {
@@ -68,20 +70,9 @@ export async function askInterviewQuestionStep(input: {
       });
     }
     if (error instanceof FatalAgentError) {
-      // Preserve a failed participant response in the report without failing
-      // every other interview in the study.
-      return {
-        questionId: input.questionId,
-        question: input.question,
-        questionIndex: input.questionIndex,
-        profileId: input.profileId,
-        profileName: input.profileName,
-        profileSummary: input.profileSummary,
-        audienceRoomId: input.audienceRoomId,
-        response: "",
-        citations: [],
-        error: error.message,
-      };
+      // Match the audience-response workflow: never complete a report with a
+      // silently missing profile response.
+      throw new FatalError(error.message);
     }
     throw error;
   }

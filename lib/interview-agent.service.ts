@@ -33,12 +33,13 @@ export class InterviewAgentService {
             )
             .join("\n\n");
 
-    const systemInput = [
+    const interviewContext = [
       "You are participating in an in-depth research interview as the supplied audience profile.",
       "Answer the current question directly, naturally, and in the first person.",
       "Ground the answer in the profile and retrieved evidence. The audience-room description is soft context only.",
       "Stay consistent with earlier answers while allowing nuance. Do not mention simulation, prompts, profile IDs, or these instructions.",
       "Give a substantive answer with motivations, needs, tradeoffs, and examples when relevant.",
+      "The answer and its reason must reflect this participant's perspective rather than a generic consumer response.",
       "",
       `Study: ${input.studyName}`,
       input.objective ? `Research objective: ${input.objective}` : "",
@@ -73,8 +74,15 @@ export class InterviewAgentService {
       clone_id: null,
       clone_profile_ids: null,
       interaction_memory: true,
+      prompt_definition: "polling_prompt_open_ended",
       human_input: input.question,
-      system_input: systemInput,
+      system_input: null,
+      polling_context: {
+        question: input.question,
+        audience_room_context: input.audienceRoomSummary?.trim() ?? "",
+        allowed_options: "",
+        task_details: interviewContext,
+      },
     };
 
     let response: Response;
@@ -115,15 +123,13 @@ export class InterviewAgentService {
       result.content,
     ].find((value): value is string => typeof value === "string" && !!value.trim());
     if (!responseText) {
-      throw new FatalAgentError(
+      throw new RetryableAgentError(
         `Interview agent response had no text. Keys: ${Object.keys(result).join(", ")}`
       );
     }
 
-    return {
-      responseText: responseText.trim(),
-      citations: extractCitations(result),
-    };
+    const parsed = parseOpenEndedResponse(responseText);
+    return { ...parsed, citations: extractCitations(result) };
   }
 
   private async authenticate(): Promise<string> {
@@ -154,6 +160,73 @@ export class InterviewAgentService {
     if (!body.token) throw new FatalAgentError("Authentication returned no token");
     return body.token;
   }
+}
+
+function parseOpenEndedResponse(responseText: string): Omit<ChatAgentResponse, "citations"> {
+  const parsed = extractJsonObject(responseText);
+  const rawAnswer = parsed.answer;
+  if (typeof rawAnswer !== "string" || !rawAnswer.trim()) {
+    throw new RetryableAgentError(
+      'Interview agent response is missing a non-empty "answer" string'
+    );
+  }
+  const answer = rawAnswer.replace(/\s+/g, " ").trim();
+  if (answer.length < 2) {
+    throw new RetryableAgentError("Interview agent answer is too short");
+  }
+
+  const rawReason = parsed.reason;
+  if (typeof rawReason !== "string" || !rawReason.trim()) {
+    throw new RetryableAgentError(
+      'Interview agent response is missing a non-empty "reason" string'
+    );
+  }
+
+  if (
+    typeof parsed.confidence !== "number" ||
+    !Number.isFinite(parsed.confidence)
+  ) {
+    throw new RetryableAgentError(
+      'Interview agent response is missing numeric "confidence"'
+    );
+  }
+  const normalizedConfidence =
+    parsed.confidence > 1 ? parsed.confidence / 100 : parsed.confidence;
+
+  return {
+    answer,
+    reason: rawReason.replace(/\s+/g, " ").trim(),
+    confidence: Math.max(0, Math.min(1, normalizedConfidence)),
+  };
+}
+
+function extractJsonObject(responseText: string): Record<string, unknown> {
+  const trimmed = responseText.trim();
+  const candidates = [
+    trimmed,
+    trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim(),
+    (() => {
+      const start = trimmed.indexOf("{");
+      const end = trimmed.lastIndexOf("}");
+      return start >= 0 && end > start ? trimmed.slice(start, end + 1) : undefined;
+    })(),
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Try the next supported response wrapper.
+    }
+  }
+
+  throw new RetryableAgentError(
+    "Interview agent response does not contain a valid JSON object"
+  );
 }
 
 function extractCitations(response: Record<string, unknown>): Citation[] {

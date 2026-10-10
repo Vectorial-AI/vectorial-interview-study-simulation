@@ -20,7 +20,9 @@ export class ReportService {
     const rows = responses.map((response) => ({
       profileId: response.profileId,
       profileName: response.profileName,
-      response: response.response,
+      answer: response.response,
+      reason: response.reason,
+      confidence: response.confidence,
     }));
     const result = await this.jsonCompletion<{
       summary?: string;
@@ -33,7 +35,7 @@ export class ReportService {
         quote?: string;
       }>;
     }>(
-      "Analyze interview responses to one research question. Return JSON with summary, themes, consensus, disagreements, and notableQuotes. Quotes must be short verbatim excerpts and retain the supplied profileId/profileName. Represent disagreement and minority views; do not fabricate.",
+      "Analyze interview responses to one research question. Each response includes the participant's answer, explicit reason, and confidence. Return JSON with summary, themes, consensus, disagreements, and notableQuotes. Base findings on both answers and reasons, weight confidence cautiously rather than treating it as certainty, and preserve minority views. Quotes must be short verbatim excerpts from answers and retain the supplied profileId/profileName. Do not fabricate.",
       JSON.stringify({ question, responses: rows })
     );
 
@@ -75,12 +77,14 @@ export class ReportService {
       needs?: string[];
       concerns?: string[];
     }>(
-      "Summarize one interview participant across all questions. Return JSON with summary, keyViews, needs, and concerns. Preserve nuance, uncertainty, and contradictions. Use only supplied answers.",
+      "Summarize one interview participant across all questions. Return JSON with summary, keyViews, needs, and concerns. Use the supplied answers and reasons, treat confidence as self-reported rather than objective certainty, and preserve nuance, uncertainty, and contradictions. Do not add unsupported claims.",
       JSON.stringify({
         participant: profile,
         answers: responses.map((response) => ({
           question: response.question,
-          response: response.response,
+          answer: response.response,
+          reason: response.reason,
+          confidence: response.confidence,
         })),
       })
     );

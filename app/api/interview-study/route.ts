@@ -206,6 +206,12 @@ function validate(body: Record<string, unknown>): Omit<
       };
     }
   );
+  if (
+    new Set(audienceRooms.map((room) => room.id)).size !==
+    audienceRooms.length
+  ) {
+    throw new Error("audience room IDs must be unique");
+  }
   const requestedProfiles = audienceRooms.reduce(
     (total, room) => total + room.maxProfiles,
     0
