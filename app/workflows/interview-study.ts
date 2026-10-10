@@ -198,7 +198,6 @@ export async function interviewStudyWorkflow(
       studyName: input.studyName,
       objective: input.objective,
       questionSummaries,
-      individualSummaries,
       requestedProfileCount: participants.length,
       successfulResponseCount,
     });

@@ -668,8 +668,10 @@ interface Citation {
 
 ### Report semantics
 
-- `overallSummary` is the study-level report.
-- `questionSummaries` contains one aggregate analysis per submitted question.
+- `questionSummaries` contains one aggregate analysis generated from all
+  persona answers to each submitted question.
+- `overallSummary` is the study-level report generated from those completed
+  per-question summaries.
 - `individualSummaries` contains one cross-question summary per profile.
 - `individualResponses` contains each persona's answer, explicit reason, and
   confidence for every attempted question/profile pair.

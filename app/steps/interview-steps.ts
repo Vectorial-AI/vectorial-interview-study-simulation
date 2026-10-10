@@ -112,7 +112,6 @@ export async function summarizeStudyStep(input: {
   studyName: string;
   objective?: string;
   questionSummaries: QuestionSummary[];
-  individualSummaries: IndividualSummary[];
   requestedProfileCount: number;
   successfulResponseCount: number;
 }): Promise<InterviewStudyReport["overallSummary"]> {

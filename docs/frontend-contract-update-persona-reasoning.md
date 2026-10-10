@@ -67,8 +67,13 @@ The response shapes for both summary levels are unchanged:
 - `overallSummary` contains the final synthesis across all questions.
 
 The backend now uses persona answers, reasons, and confidence when generating
-question and participant summaries. The overall summary is generated after all
-question and participant summaries are complete.
+question and participant summaries. Each `questionSummaries[]` item is produced
+from all persona responses to that specific question. `overallSummary` is then
+generated solely by synthesizing those per-question summaries.
+
+Summary generation uses a strict response schema. A malformed or empty summary
+fails and retries the workflow step instead of being published as
+`"No summary available."`.
 
 ## Completion semantics
 
