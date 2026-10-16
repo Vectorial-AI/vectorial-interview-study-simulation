@@ -12,6 +12,7 @@ import { ReportService } from "@/lib/report.service";
 import type {
   IndividualResponse,
   IndividualSummary,
+  InterviewContextAsset,
   InterviewStudyReport,
   QuestionSummary,
   RoomProfiles,
@@ -38,6 +39,7 @@ export async function askInterviewQuestionStep(input: {
   additionalContext?: string;
   questionId: string;
   question: string;
+  questionAssets?: InterviewContextAsset[];
   questionIndex: number;
   audienceRoomId: string;
   audienceRoomSummary?: string;
@@ -82,12 +84,14 @@ askInterviewQuestionStep.maxRetries = 6;
 export async function summarizeQuestionStep(
   questionId: string,
   question: string,
+  questionAssets: InterviewContextAsset[],
   responses: IndividualResponse[]
 ): Promise<QuestionSummary> {
   "use step";
   return new ReportService().summarizeQuestion(
     questionId,
     question,
+    questionAssets,
     responses.filter((response) => !response.error && !!response.response)
   );
 }

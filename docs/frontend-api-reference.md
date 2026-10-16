@@ -99,6 +99,9 @@ interface StartInterviewStudyRequest {
         id?: string;
         /** Required non-empty question text. */
         text: string;
+
+        /** Optional supporting files used as context for this question. Max 3. */
+        questionAssets?: InterviewContextAsset[];
       }
   >;
 
@@ -126,10 +129,24 @@ interface StartInterviewStudyRequest {
   /** Optional initiating-user email for application metadata. */
   userEmail?: string;
 }
+
+interface InterviewContextAsset {
+  /** Required generated or authored description; the backend does not inspect the file. */
+  summary: string;
+  /** Optional author-provided framing shown to interview personas. */
+  supportingText?: string;
+  contentType?: "image" | "document";
+  mimeType?: string;
+  url?: string;
+  filename?: string;
+}
 ```
 
 Whitespace-only strings are treated as missing. Question IDs must be unique
-within a study.
+within a study. A question may include up to three `questionAssets`. The
+backend passes `summary` and `supportingText` to personas and preserves the
+remaining metadata for frontend display; it does not download or inspect the
+asset URL.
 
 ### Recommended request
 
@@ -145,7 +162,17 @@ easier to connect report sections back to frontend records.
   "questions": [
     {
       "id": "current-experience",
-      "text": "Tell me about your current experience completing an online checkout."
+      "text": "Tell me about your current experience completing an online checkout.",
+      "questionAssets": [
+        {
+          "summary": "Mobile checkout with delivery, payment, and order-review steps.",
+          "supportingText": "Treat this as the current checkout experience.",
+          "contentType": "image",
+          "mimeType": "image/png",
+          "url": "https://example.com/mobile-checkout.png",
+          "filename": "mobile-checkout.png"
+        }
+      ]
     },
     {
       "id": "abandonment",
@@ -452,7 +479,11 @@ interface InterviewStudyRecord {
   studyName: string;
   objective: string | null;
   additionalContext: string | null;
-  questions: Array<{ id: string; text: string }>;
+  questions: Array<{
+    id: string;
+    text: string;
+    questionAssets?: InterviewContextAsset[];
+  }>;
   audienceRooms: Array<{ id: string; maxProfiles: number }>;
   enterpriseName: string;
   userId: string;
@@ -565,6 +596,13 @@ interface InterviewStudyReport {
   studyName: string;
   objective?: string;
 
+  /** Submitted questions, including normalized supporting-asset metadata. */
+  questions: Array<{
+    id: string;
+    text: string;
+    questionAssets?: InterviewContextAsset[];
+  }>;
+
   /** All requested audience-room IDs. */
   audienceRoomIds: string[];
 
@@ -607,6 +645,7 @@ interface OverallSummary {
 interface QuestionSummary {
   questionId: string;
   question: string;
+  questionAssets: InterviewContextAsset[];
   responseCount: number;
   summary: string;
   themes: string[];
@@ -670,6 +709,8 @@ interface Citation {
 
 - `questionSummaries` contains one aggregate analysis generated from all
   persona answers to each submitted question.
+- `questions` and each `questionSummaries[].questionAssets` preserve attachment
+  metadata so results and reruns can render or reuse the original context.
 - `overallSummary` is the study-level report generated from those completed
   per-question summaries.
 - `individualSummaries` contains one cross-question summary per profile.

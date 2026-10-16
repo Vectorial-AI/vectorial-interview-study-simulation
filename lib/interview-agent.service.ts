@@ -1,6 +1,10 @@
 import { v4 as uuidv4 } from "uuid";
 import { Settings } from "@/lib/settings";
-import type { ChatAgentResponse, Citation } from "@/lib/types";
+import type {
+  ChatAgentResponse,
+  Citation,
+  InterviewContextAsset,
+} from "@/lib/types";
 
 export class RetryableAgentError extends Error {}
 export class FatalAgentError extends Error {}
@@ -20,6 +24,7 @@ export class InterviewAgentService {
     objective?: string;
     additionalContext?: string;
     question: string;
+    questionAssets?: InterviewContextAsset[];
     priorResponses: Array<{ question: string; response: string }>;
   }): Promise<ChatAgentResponse> {
     const token = await this.authenticate();
@@ -32,6 +37,10 @@ export class InterviewAgentService {
                 `${index + 1}. Interviewer: ${turn.question}\nParticipant: ${turn.response}`
             )
             .join("\n\n");
+    const questionWithAssets = formatQuestionWithAssets(
+      input.question,
+      input.questionAssets
+    );
 
     const interviewContext = [
       "You are participating in an in-depth research interview as the supplied audience profile.",
@@ -75,10 +84,10 @@ export class InterviewAgentService {
       clone_profile_ids: null,
       interaction_memory: true,
       prompt_definition: "polling_prompt_open_ended",
-      human_input: input.question,
+      human_input: questionWithAssets,
       system_input: null,
       polling_context: {
-        question: input.question,
+        question: questionWithAssets,
         audience_room_context: input.audienceRoomSummary?.trim() ?? "",
         allowed_options: "",
         task_details: interviewContext,
@@ -160,6 +169,31 @@ export class InterviewAgentService {
     if (!body.token) throw new FatalAgentError("Authentication returned no token");
     return body.token;
   }
+}
+
+function formatQuestionWithAssets(
+  question: string,
+  assets: InterviewContextAsset[] = []
+): string {
+  if (assets.length === 0) return question;
+
+  const assetBlocks = assets.map((asset, index) => {
+    const label = asset.filename?.trim() || `Context ${index + 1}`;
+    const details = [
+      asset.summary.trim(),
+      asset.supportingText?.trim()
+        ? `Supporting text: ${asset.supportingText.trim()}`
+        : "",
+    ].filter(Boolean);
+    return `${index + 1}. ${label}\n   ${details.join("\n   ")}`;
+  });
+
+  return [
+    question,
+    "",
+    "Supporting materials (context for this question):",
+    ...assetBlocks,
+  ].join("\n");
 }
 
 function parseOpenEndedResponse(responseText: string): Omit<ChatAgentResponse, "citations"> {

@@ -3,9 +3,20 @@ export interface AudienceRoomInput {
   maxProfiles: number;
 }
 
+export interface InterviewContextAsset {
+  summary: string;
+  supportingText?: string;
+  contentType?: "image" | "document";
+  mimeType?: string;
+  url?: string;
+  filename?: string;
+}
+
 export interface InterviewQuestionInput {
   id: string;
   text: string;
+  /** Supporting material for this question; not an answer option. */
+  questionAssets?: InterviewContextAsset[];
 }
 
 export interface InterviewStudyInput {
@@ -59,6 +70,7 @@ export interface IndividualResponse {
 export interface QuestionSummary {
   questionId: string;
   question: string;
+  questionAssets: InterviewContextAsset[];
   responseCount: number;
   summary: string;
   themes: string[];
@@ -87,6 +99,7 @@ export interface InterviewStudyReport {
   studyId: string;
   studyName: string;
   objective?: string;
+  questions: InterviewQuestionInput[];
   audienceRoomIds: string[];
   questionCount: number;
   profileCount: number;

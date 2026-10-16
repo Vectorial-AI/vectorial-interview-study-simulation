@@ -7,10 +7,13 @@ import { ProgressStore } from "@/lib/progress-store";
 import { Settings } from "@/lib/settings";
 import type {
   AudienceRoomInput,
+  InterviewContextAsset,
   InterviewQuestionInput,
   InterviewStudyInput,
   InterviewStudyStatus,
 } from "@/lib/types";
+
+const MAX_QUESTION_ASSETS = 3;
 
 export async function OPTIONS() {
   return cors(new NextResponse(null, { status: 204 }));
@@ -170,6 +173,10 @@ function validate(body: Record<string, unknown>): Omit<
           optionalString(value.id) ??
           `question-${index + 1}`,
         text: requiredString(value.text, `questions[${index}].text`),
+        questionAssets: parseQuestionAssets(
+          value.questionAssets,
+          `questions[${index}].questionAssets`
+        ),
       };
     }
   );
@@ -242,6 +249,84 @@ function requiredString(value: unknown, field: string): string {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function parseQuestionAssets(
+  value: unknown,
+  field: string
+): InterviewContextAsset[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be an array`);
+  }
+  if (value.length > MAX_QUESTION_ASSETS) {
+    throw new Error(
+      `${field} may contain at most ${MAX_QUESTION_ASSETS} assets`
+    );
+  }
+
+  const assets = value.map((asset, index): InterviewContextAsset => {
+    const assetField = `${field}[${index}]`;
+    if (!asset || typeof asset !== "object" || Array.isArray(asset)) {
+      throw new Error(`${assetField} must be an object`);
+    }
+    const raw = asset as Record<string, unknown>;
+    const rawContentType = optionalStringField(
+      raw.contentType,
+      `${assetField}.contentType`
+    );
+    if (
+      rawContentType !== undefined &&
+      rawContentType !== "image" &&
+      rawContentType !== "document"
+    ) {
+      throw new Error(
+        `${assetField}.contentType must be image or document`
+      );
+    }
+    const contentType: InterviewContextAsset["contentType"] = rawContentType;
+
+    return {
+      summary: requiredString(raw.summary, `${assetField}.summary`),
+      ...optionalProperty(
+        "supportingText",
+        optionalStringField(raw.supportingText, `${assetField}.supportingText`)
+      ),
+      ...optionalProperty("contentType", contentType),
+      ...optionalProperty(
+        "mimeType",
+        optionalStringField(raw.mimeType, `${assetField}.mimeType`)
+      ),
+      ...optionalProperty(
+        "url",
+        optionalStringField(raw.url, `${assetField}.url`)
+      ),
+      ...optionalProperty(
+        "filename",
+        optionalStringField(raw.filename, `${assetField}.filename`)
+      ),
+    };
+  });
+
+  return assets.length > 0 ? assets : undefined;
+}
+
+function optionalStringField(
+  value: unknown,
+  field: string
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`${field} must be a string when provided`);
+  }
+  return value.trim() || undefined;
+}
+
+function optionalProperty<K extends string, V>(
+  key: K,
+  value: V | undefined
+): Partial<Record<K, V>> {
+  return value === undefined ? {} : ({ [key]: value } as Record<K, V>);
 }
 
 function optionalStatus(value: unknown): InterviewStudyStatus | undefined {

@@ -3,6 +3,7 @@ import { Settings } from "@/lib/settings";
 import type {
   IndividualResponse,
   IndividualSummary,
+  InterviewContextAsset,
   QuestionSummary,
 } from "@/lib/types";
 
@@ -15,6 +16,7 @@ export class ReportService {
   async summarizeQuestion(
     questionId: string,
     question: string,
+    questionAssets: InterviewContextAsset[],
     responses: IndividualResponse[]
   ): Promise<QuestionSummary> {
     const rows = responses.map((response) => ({
@@ -36,7 +38,7 @@ export class ReportService {
       }>;
     }>(
       "Analyze interview responses to one research question. Each response includes the participant's answer, explicit reason, and confidence. Return JSON with summary, themes, consensus, disagreements, and notableQuotes. Base findings on both answers and reasons, weight confidence cautiously rather than treating it as certainty, and preserve minority views. Quotes must be short verbatim excerpts from answers and retain the supplied profileId/profileName. Do not fabricate.",
-      JSON.stringify({ question, responses: rows }),
+      JSON.stringify({ question, questionAssets, responses: rows }),
       "question_summary",
       QUESTION_SUMMARY_SCHEMA
     );
@@ -44,6 +46,7 @@ export class ReportService {
     return {
       questionId,
       question,
+      questionAssets,
       responseCount: responses.length,
       summary: requiredText(result.summary, "question summary"),
       themes: stringList(result.themes),

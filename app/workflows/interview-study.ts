@@ -108,6 +108,7 @@ export async function interviewStudyWorkflow(
                   additionalContext: input.additionalContext,
                   questionId: question.id,
                   question: question.text,
+                  questionAssets: question.questionAssets,
                   questionIndex,
                   audienceRoomId: participant.audienceRoomId,
                   audienceRoomSummary: participant.audienceRoomSummary,
@@ -158,6 +159,7 @@ export async function interviewStudyWorkflow(
         await summarizeQuestionStep(
           question.id,
           question.text,
+          question.questionAssets ?? [],
           questionResponses
         )
       );
@@ -207,6 +209,7 @@ export async function interviewStudyWorkflow(
       studyId: input.studyId,
       studyName: input.studyName,
       objective: input.objective,
+      questions: input.questions,
       audienceRoomIds: input.audienceRooms.map((room) => room.id),
       questionCount: input.questions.length,
       profileCount: participants.length,
