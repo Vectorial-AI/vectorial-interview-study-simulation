@@ -13,7 +13,7 @@ import type {
   InterviewStudyStatus,
 } from "@/lib/types";
 
-const MAX_QUESTION_ASSETS = 3;
+const MAX_CONTEXT_ASSETS = 3;
 
 export async function OPTIONS() {
   return cors(new NextResponse(null, { status: 204 }));
@@ -92,6 +92,7 @@ export async function POST(request: NextRequest) {
       studyName: input.studyName,
       objective: input.objective,
       additionalContext: input.additionalContext,
+      contextAssets: input.contextAssets,
       questions: input.questions,
       audienceRooms: input.audienceRooms,
       enterpriseName: input.enterpriseName,
@@ -173,10 +174,6 @@ function validate(body: Record<string, unknown>): Omit<
           optionalString(value.id) ??
           `question-${index + 1}`,
         text: requiredString(value.text, `questions[${index}].text`),
-        questionAssets: parseQuestionAssets(
-          value.questionAssets,
-          `questions[${index}].questionAssets`
-        ),
       };
     }
   );
@@ -232,6 +229,7 @@ function validate(body: Record<string, unknown>): Omit<
     studyName,
     objective: optionalString(body.objective),
     additionalContext: optionalString(body.additionalContext),
+    contextAssets: parseContextAssets(body.contextAssets),
     questions,
     audienceRooms,
     enterpriseName,
@@ -251,17 +249,17 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function parseQuestionAssets(
-  value: unknown,
-  field: string
+function parseContextAssets(
+  value: unknown
 ): InterviewContextAsset[] | undefined {
+  const field = "contextAssets";
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
     throw new Error(`${field} must be an array`);
   }
-  if (value.length > MAX_QUESTION_ASSETS) {
+  if (value.length > MAX_CONTEXT_ASSETS) {
     throw new Error(
-      `${field} may contain at most ${MAX_QUESTION_ASSETS} assets`
+      `${field} may contain at most ${MAX_CONTEXT_ASSETS} assets`
     );
   }
 

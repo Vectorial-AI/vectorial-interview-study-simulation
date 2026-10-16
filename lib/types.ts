@@ -15,8 +15,6 @@ export interface InterviewContextAsset {
 export interface InterviewQuestionInput {
   id: string;
   text: string;
-  /** Supporting material for this question; not an answer option. */
-  questionAssets?: InterviewContextAsset[];
 }
 
 export interface InterviewStudyInput {
@@ -25,6 +23,8 @@ export interface InterviewStudyInput {
   studyName: string;
   objective?: string;
   additionalContext?: string;
+  /** Supporting material shared by every question in the study. */
+  contextAssets?: InterviewContextAsset[];
   questions: InterviewQuestionInput[];
   audienceRooms: AudienceRoomInput[];
   enterpriseName: string;
@@ -70,7 +70,6 @@ export interface IndividualResponse {
 export interface QuestionSummary {
   questionId: string;
   question: string;
-  questionAssets: InterviewContextAsset[];
   responseCount: number;
   summary: string;
   themes: string[];
@@ -99,6 +98,7 @@ export interface InterviewStudyReport {
   studyId: string;
   studyName: string;
   objective?: string;
+  contextAssets: InterviewContextAsset[];
   questions: InterviewQuestionInput[];
   audienceRoomIds: string[];
   questionCount: number;
@@ -132,6 +132,7 @@ export interface InterviewStudyRecord {
   studyName: string;
   objective: string | null;
   additionalContext: string | null;
+  contextAssets: InterviewContextAsset[];
   questions: InterviewQuestionInput[];
   audienceRooms: AudienceRoomInput[];
   enterpriseName: string;

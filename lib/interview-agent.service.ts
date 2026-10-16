@@ -24,7 +24,7 @@ export class InterviewAgentService {
     objective?: string;
     additionalContext?: string;
     question: string;
-    questionAssets?: InterviewContextAsset[];
+    contextAssets?: InterviewContextAsset[];
     priorResponses: Array<{ question: string; response: string }>;
   }): Promise<ChatAgentResponse> {
     const token = await this.authenticate();
@@ -37,9 +37,9 @@ export class InterviewAgentService {
                 `${index + 1}. Interviewer: ${turn.question}\nParticipant: ${turn.response}`
             )
             .join("\n\n");
-    const questionWithAssets = formatQuestionWithAssets(
+    const questionWithContext = formatQuestionWithContextAssets(
       input.question,
-      input.questionAssets
+      input.contextAssets
     );
 
     const interviewContext = [
@@ -84,10 +84,10 @@ export class InterviewAgentService {
       clone_profile_ids: null,
       interaction_memory: true,
       prompt_definition: "polling_prompt_open_ended",
-      human_input: questionWithAssets,
+      human_input: questionWithContext,
       system_input: null,
       polling_context: {
-        question: questionWithAssets,
+        question: questionWithContext,
         audience_room_context: input.audienceRoomSummary?.trim() ?? "",
         allowed_options: "",
         task_details: interviewContext,
@@ -171,7 +171,7 @@ export class InterviewAgentService {
   }
 }
 
-function formatQuestionWithAssets(
+function formatQuestionWithContextAssets(
   question: string,
   assets: InterviewContextAsset[] = []
 ): string {
@@ -191,7 +191,7 @@ function formatQuestionWithAssets(
   return [
     question,
     "",
-    "Supporting materials (context for this question):",
+    "Study supporting materials (shared context for every interview question):",
     ...assetBlocks,
   ].join("\n");
 }

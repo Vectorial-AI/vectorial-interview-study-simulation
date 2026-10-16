@@ -39,7 +39,7 @@ export async function askInterviewQuestionStep(input: {
   additionalContext?: string;
   questionId: string;
   question: string;
-  questionAssets?: InterviewContextAsset[];
+  contextAssets?: InterviewContextAsset[];
   questionIndex: number;
   audienceRoomId: string;
   audienceRoomSummary?: string;
@@ -84,14 +84,14 @@ askInterviewQuestionStep.maxRetries = 6;
 export async function summarizeQuestionStep(
   questionId: string,
   question: string,
-  questionAssets: InterviewContextAsset[],
+  contextAssets: InterviewContextAsset[],
   responses: IndividualResponse[]
 ): Promise<QuestionSummary> {
   "use step";
   return new ReportService().summarizeQuestion(
     questionId,
     question,
-    questionAssets,
+    contextAssets,
     responses.filter((response) => !response.error && !!response.response)
   );
 }

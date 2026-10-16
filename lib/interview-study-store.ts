@@ -2,6 +2,7 @@ import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { Settings } from "@/lib/settings";
 import type {
   AudienceRoomInput,
+  InterviewContextAsset,
   InterviewQuestionInput,
   InterviewStudyRecord,
   InterviewStudyReport,
@@ -15,6 +16,7 @@ interface CreateStudyRecord {
   studyName: string;
   objective?: string;
   additionalContext?: string;
+  contextAssets?: InterviewContextAsset[];
   questions: InterviewQuestionInput[];
   audienceRooms: AudienceRoomInput[];
   enterpriseName: string;
@@ -37,6 +39,7 @@ interface StudyRow extends QueryResultRow {
   studyName: string;
   objective: string | null;
   additionalContext: string | null;
+  contextAssets: InterviewContextAsset[];
   questions: InterviewQuestionInput[];
   audienceRooms: AudienceRoomInput[];
   enterpriseName: string;
@@ -82,12 +85,12 @@ export class InterviewStudyStore {
     const result = await this.pool.query<StudyRow>(
       `INSERT INTO "InterviewStudyResult" (
         "id", "studyId", "runId", "studyName", "objective",
-        "additionalContext", "questions", "audienceRooms", "enterpriseName",
+        "additionalContext", "contextAssets", "questions", "audienceRooms", "enterpriseName",
         "userId", "userEmail", "status", "questionCount"
       ) VALUES (
         $1, $2, $3, $4, $5,
-        $6, $7::jsonb, $8::jsonb, $9,
-        $10, $11, 'queued', $12
+        $6, $7::jsonb, $8::jsonb, $9::jsonb, $10,
+        $11, $12, 'queued', $13
       )
       RETURNING *`,
       [
@@ -97,6 +100,7 @@ export class InterviewStudyStore {
         input.studyName,
         input.objective ?? null,
         input.additionalContext ?? null,
+        JSON.stringify(input.contextAssets ?? []),
         JSON.stringify(input.questions),
         JSON.stringify(input.audienceRooms),
         input.enterpriseName,
@@ -275,6 +279,7 @@ async function createTable(client: PoolClient): Promise<void> {
       "studyName" text NOT NULL,
       "objective" text,
       "additionalContext" text,
+      "contextAssets" jsonb NOT NULL DEFAULT '[]'::jsonb,
       "questions" jsonb NOT NULL DEFAULT '[]'::jsonb,
       "audienceRooms" jsonb NOT NULL DEFAULT '[]'::jsonb,
       "enterpriseName" text NOT NULL,
@@ -292,6 +297,10 @@ async function createTable(client: PoolClient): Promise<void> {
       CONSTRAINT "InterviewStudyResult_status_check"
         CHECK ("status" IN ('queued', 'running', 'completed', 'failed'))
     )
+  `);
+  await client.query(`
+    ALTER TABLE "InterviewStudyResult"
+    ADD COLUMN IF NOT EXISTS "contextAssets" jsonb NOT NULL DEFAULT '[]'::jsonb
   `);
   await client.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS "InterviewStudyResult_runId_key"
@@ -324,6 +333,7 @@ function mapRow(row: StudyRow): InterviewStudyRecord {
     studyName: row.studyName,
     objective: row.objective,
     additionalContext: row.additionalContext,
+    contextAssets: row.contextAssets ?? [],
     questions: row.questions,
     audienceRooms: row.audienceRooms,
     enterpriseName: row.enterpriseName,
